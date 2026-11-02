@@ -267,7 +267,7 @@ def write_latex_table(summary):
         ])
 
     path.write_text(
-        '\\n'.join(lines) + '\\n',
+        '\n'.join(lines) + '\n',
         encoding='utf-8',
     )
     return path

@@ -182,30 +182,94 @@ def build_plot_summary(image_level):
 def write_latex_table(summary):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUTPUT_DIR / 'rq1_summary_table.tex'
-    lines = ['\\begin{table}[htbp]', '\\vspace{0.2cm}', '\\centering', '\\small', '\\caption{Valori medi delle statistiche NRC-VAD calcolate a livello di risposta, aggregati per modello, dimensione e condizione di prompt nella condizione \\texttt{NO\\_SYS}.}', '\\label{tab:rq1-statistiche}', '\\begin{tabular}{lllcccc}', '\\hline', '\\textbf{Modello} & \\textbf{Dimensione} & \\textbf{Condizione} & \\textbf{Media} & \\textbf{Dev. std.} & \\textbf{Mediana} & \\textbf{Massimo} \\\\', '\\hline']
-    model_order = ['Qwen Standard', 'Qwen Obliterated']
-    for model_label in model_order:
+
+    lines = []
+    table_specs = [
+        (
+            'Qwen Standard',
+            'standard',
+            'il modello standard',
+        ),
+        (
+            'Qwen Obliterated',
+            'obliterated',
+            'la variante \\textit{Obliterated}',
+        ),
+    ]
+
+    for model_label, label_suffix, caption_model in table_specs:
         model_df = summary[summary['model_label'] == model_label]
+
         if model_df.empty:
             continue
-        latex_model = 'Standard' if model_label == 'Qwen Standard' else 'Obliterated'
-        first_model_row = True
+
+        lines.extend([
+            '\\begin{table}[H]',
+            '\\centering',
+            '\\footnotesize',
+            (
+                f'\\caption{{Statistiche NRC-VAD per {caption_model} '
+                'nella condizione \\texttt{NO\\_SYS}.}'
+            ),
+            f'\\label{{tab:rq1-statistiche-{label_suffix}}}',
+            '',
+            '\\vspace{0.2cm}',
+            '',
+            '\\begin{tabular}{llcccc}',
+            '\\hline',
+            (
+                '\\textbf{Dimensione} & '
+                '\\textbf{Condizione} & '
+                '\\textbf{Media} & '
+                '\\textbf{Dev. std.} & '
+                '\\textbf{Mediana} & '
+                '\\textbf{Massimo} \\\\'
+            ),
+            '\\hline',
+        ])
+
         for dimension in DIMENSIONS:
             dim_df = model_df[model_df['dimension'] == dimension]
             first_dimension_row = True
+
             for condition in PROMPT_ORDER:
-                row_df = dim_df[dim_df['prompt_condition'] == condition]
+                row_df = dim_df[
+                    dim_df['prompt_condition'] == condition
+                ]
+
                 if row_df.empty:
                     continue
+
                 row = row_df.iloc[0]
-                model_cell = latex_model if first_model_row else ''
-                dimension_cell = DIMENSION_LABELS[dimension] if first_dimension_row else ''
-                lines.append(f"{model_cell} & {dimension_cell} & {PROMPT_LABELS[condition]} & {format_decimal(row['mean'])} & {format_decimal(row['std'])} & {format_decimal(row['median'])} & {format_decimal(row['max'])} \\\\")
-                first_model_row = False
+                dimension_cell = (
+                    DIMENSION_LABELS[dimension]
+                    if first_dimension_row
+                    else ''
+                )
+
+                lines.append(
+                    f"{dimension_cell} & "
+                    f"{PROMPT_LABELS[condition]} & "
+                    f"{format_decimal(row['mean'])} & "
+                    f"{format_decimal(row['std'])} & "
+                    f"{format_decimal(row['median'])} & "
+                    f"{format_decimal(row['max'])} \\\\"
+                )
+
                 first_dimension_row = False
+
             lines.append('\\hline')
-    lines.extend(['\\end{tabular}', '\\vspace{0.3cm}', '\\end{table}'])
-    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+        lines.extend([
+            '\\end{tabular}',
+            '\\end{table}',
+            '',
+        ])
+
+    path.write_text(
+        '\\n'.join(lines) + '\\n',
+        encoding='utf-8',
+    )
     return path
 
 def write_latex_values(summary):

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+outputs/
+merged_outputs/
+output_qwen*/
+output_Qwen*/
+image_annotations.csv
+*.zip

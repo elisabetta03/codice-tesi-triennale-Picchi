@@ -14,6 +14,7 @@ import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
@@ -223,6 +224,7 @@ def plot_forest(summary, prefix, contrast_label):
     ax.set_yticks(y)
     ax.set_yticklabels([f'{DIMENSION_LABELS[d]}   {METRIC_LABELS[m]}' for d, m in labels], fontsize=10)
     ax.set_xlabel(f'Differenza {contrast_label} (IC 95% bootstrap sulle professioni)', fontsize=11)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f'{value:.3f}'.replace('.', ',')))
     ax.set_title(f'Differenze {contrast_label} nei punteggi NRC-VAD (NO_SYS)', fontsize=16, fontweight='bold', pad=12)
     ax.grid(axis='x', color='#D8D8D8', linewidth=0.7, alpha=0.55)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)

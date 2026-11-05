@@ -7,8 +7,6 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
-from matplotlib.patches import Patch
-from matplotlib.colors import to_rgb
 ROOT = Path(__file__).resolve().parent
 INPUT_FILE = ROOT / 'merged_outputs' / 'merged_long_qwen_obliterated.csv'
 OUTPUT_DIR = ROOT / 'analysis_outputs' / 'rq4'
@@ -20,14 +18,12 @@ PROMPT_ORDER = ['baseline_neutral', 'occupation_neutral', 'positive_modifier', '
 PROMPT_LABELS = {'baseline_neutral': 'Baseline', 'occupation_neutral': 'Occupazione neutra', 'positive_modifier': 'Modificatore positivo', 'negative_modifier': 'Modificatore negativo'}
 SENTIMENT_ORDER = ['NEUTRAL', 'POSITIVE', 'NEGATIVE']
 SOURCE_ORDER = ['REAL', 'AI']
-SOURCE_LABELS = {'REAL': 'Real', 'AI': 'AI'}
 DIMENSIONS = ['valence', 'arousal', 'dominance']
 DIMENSION_LABELS = {'valence': 'Valence', 'arousal': 'Arousal', 'dominance': 'Dominance'}
 STATISTICS = ['mean', 'std', 'median', 'max']
 VAD_COLUMNS = [f'vad_{dimension}_{statistic}' for dimension in DIMENSIONS for statistic in STATISTICS]
 MODEL_COLORS = {'Qwen Standard': '#3978B8', 'Qwen Obliterated': '#D66545'}
 MODEL_MARKERS = {'Qwen Standard': 'o', 'Qwen Obliterated': 's'}
-SOURCE_STYLES = {'REAL': {'level': 1.0, 'hatch': ''}, 'AI': {'level': 0.58, 'hatch': '//'}}
 
 def model_name(value):
     if 'OBLITERATED' in str(value).upper():
@@ -47,10 +43,6 @@ def normalize_sentiment(value):
     if value not in aliases:
         raise ValueError(f'Valore inatteso in sentiment: {value!r}')
     return aliases[value]
-
-def shade(color, level):
-    rgb = np.array(to_rgb(color))
-    return tuple(1 - level * (1 - rgb))
 
 def save_csv(df, filename):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -142,34 +134,6 @@ def build_profession_source_values(image_level, eligible):
     save_csv(cell_level, 'rq4_cell_level.csv')
     save_csv(profession_source, 'rq4_profession_source_values.csv')
     return profession_source
-
-def build_absolute_summary(profession_source):
-    rows = []
-    for dimension in DIMENSIONS:
-        for statistic in STATISTICS:
-            column = f'vad_{dimension}_{statistic}'
-            summary = profession_source.groupby(['model_label', 'image_source', 'prompt_condition'], observed=True).agg(value_mean=(column, 'mean'), value_sd_between_professions=(column, lambda x: np.std(x, ddof=1) if len(x) > 1 else 0.0), n_professions=('profession', 'nunique')).reset_index()
-            summary['dimension'] = dimension
-            summary['statistic'] = statistic
-            rows.append(summary)
-    result = pd.concat(rows, ignore_index=True)
-    save_csv(result, 'rq4_absolute_summary.csv')
-    return result
-
-def build_difference_summary(profession_source):
-    rows = []
-    for dimension in DIMENSIONS:
-        column = f'vad_{dimension}_mean'
-        wide = profession_source.pivot_table(index=['model_label', 'profession', 'prompt_condition'], columns='image_source', values=column).reset_index()
-        if 'AI' not in wide.columns or 'REAL' not in wide.columns:
-            raise ValueError('Impossibile calcolare AI - REAL: manca una provenienza.')
-        wide['difference'] = wide['AI'] - wide['REAL']
-        summary = wide.groupby(['model_label', 'prompt_condition'], observed=True).agg(mean_difference=('difference', 'mean'), median_difference=('difference', 'median'), std_difference=('difference', lambda x: np.std(x, ddof=1) if len(x) > 1 else 0.0), min_difference=('difference', 'min'), max_difference=('difference', 'max'), n_professions=('profession', 'nunique')).reset_index()
-        summary['dimension'] = dimension
-        rows.append(summary)
-    result = pd.concat(rows, ignore_index=True)
-    save_csv(result, 'rq4_difference_summary.csv')
-    return result
 
 def build_profession_contrasts(profession_source):
     """Calcola AI-REAL a livello di professione per prompt e dimensione."""
@@ -285,52 +249,6 @@ def plot_forest(summary):
     fig.subplots_adjust(left=0.31, right=0.98, top=0.9, bottom=0.18)
     return save_figure(fig, 'rq4_source_forest_plot')
 
-
-def plot_absolute_values(summary):
-    plot_df = summary[summary['statistic'] == 'mean'].copy()
-    models = ['Qwen Standard', 'Qwen Obliterated']
-    x = np.arange(len(PROMPT_ORDER))
-    n_bars = len(models) * len(SOURCE_ORDER)
-    bar_width = 0.17
-    fig, axes = plt.subplots(3, 1, figsize=(9.8, 9.6), sharey=True)
-    for ax, dimension in zip(axes, DIMENSIONS):
-        dim_df = plot_df[plot_df['dimension'] == dimension]
-        for model_index, model in enumerate(models):
-            base_color = MODEL_COLORS[model]
-            for source_index, source in enumerate(SOURCE_ORDER):
-                values = []
-                for condition in PROMPT_ORDER:
-                    row = dim_df[(dim_df['model_label'] == model) & (dim_df['image_source'] == source) & (dim_df['prompt_condition'] == condition)]
-                    if len(row) != 1:
-                        raise ValueError(f'Dato non univoco: {model}, {source}, {condition}, {dimension}')
-                    values.append(float(row.iloc[0]['value_mean']))
-                bar_number = model_index * len(SOURCE_ORDER) + source_index
-                offset = (bar_number - (n_bars - 1) / 2) * bar_width
-                style = SOURCE_STYLES[source]
-                ax.bar(x + offset, values, width=bar_width, color=shade(base_color, style['level']), edgecolor=base_color, hatch=style['hatch'], linewidth=0.8, zorder=3)
-        ax.set_ylim(0, 1.02)
-        ax.set_yticks(np.arange(0, 1.01, 0.2))
-        ax.set_xticks(x)
-        ax.set_xticklabels([PROMPT_LABELS[condition] for condition in PROMPT_ORDER], fontsize=10)
-        ax.set_title(DIMENSION_LABELS[dimension], fontsize=14, fontweight='bold', pad=8)
-        ax.set_ylabel('Punteggio medio NRC-VAD', fontsize=10, labelpad=9)
-        ax.grid(axis='y', color='#D8D8D8', linewidth=0.7, alpha=0.55, zorder=0)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#555555')
-        ax.spines['bottom'].set_color('#555555')
-        ax.tick_params(axis='y', labelsize=9)
-    axes[-1].set_xlabel('Condizione di prompt', fontsize=10, labelpad=8)
-    model_handles = [Patch(facecolor=MODEL_COLORS[model], edgecolor=MODEL_COLORS[model], label=model) for model in models]
-    model_legend = fig.legend(handles=model_handles, title='Modello', loc='lower center', bbox_to_anchor=(0.5, 0.015), ncol=2, frameon=False, fontsize=9, title_fontsize=9, columnspacing=2.5)
-    fig.add_artist(model_legend)
-    neutral = '#666666'
-    source_handles = [Patch(facecolor=shade(neutral, SOURCE_STYLES[source]['level']), edgecolor=neutral, hatch=SOURCE_STYLES[source]['hatch'], label=SOURCE_LABELS[source]) for source in SOURCE_ORDER]
-    fig.legend(handles=source_handles, title='Provenienza', loc='lower center', bbox_to_anchor=(0.5, -0.03), ncol=2, frameon=False, fontsize=9, title_fontsize=9, columnspacing=2.2)
-    fig.suptitle('Provenienza delle immagini e punteggi NRC-VAD', fontsize=16, fontweight='bold', y=0.995)
-    fig.text(0.5, 0.966, 'Confronto REAL/AI controllato per professione e condizione visiva; senza prompt di sistema', ha='center', va='center', fontsize=9.5, color='#555555')
-    fig.subplots_adjust(left=0.1, right=0.985, top=0.925, bottom=0.16, hspace=0.4)
-    return save_figure(fig, 'rq4_source_absolute_values')
 
 def write_difference_table(summary):
     path = OUTPUT_DIR / 'rq4_source_difference_table.tex'

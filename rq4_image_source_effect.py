@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
 from matplotlib.patches import Patch
@@ -13,8 +14,10 @@ INPUT_FILE = ROOT / 'merged_outputs' / 'merged_long_qwen_obliterated.csv'
 OUTPUT_DIR = ROOT / 'analysis_outputs' / 'rq4'
 SYSTEM_PROMPT_FILTER = 'NO_SYS'
 EXPECTED_PARAPHRASES = 5
+BOOTSTRAP_RESAMPLES = 10_000
+BOOTSTRAP_SEED = 42
 PROMPT_ORDER = ['baseline_neutral', 'occupation_neutral', 'positive_modifier', 'negative_modifier']
-PROMPT_LABELS = {'baseline_neutral': 'Baseline', 'occupation_neutral': 'Occupational', 'positive_modifier': 'Positive', 'negative_modifier': 'Negative'}
+PROMPT_LABELS = {'baseline_neutral': 'Baseline', 'occupation_neutral': 'Occupazione neutra', 'positive_modifier': 'Modificatore positivo', 'negative_modifier': 'Modificatore negativo'}
 SENTIMENT_ORDER = ['NEUTRAL', 'POSITIVE', 'NEGATIVE']
 SOURCE_ORDER = ['REAL', 'AI']
 SOURCE_LABELS = {'REAL': 'Real', 'AI': 'AI'}
@@ -23,6 +26,7 @@ DIMENSION_LABELS = {'valence': 'Valence', 'arousal': 'Arousal', 'dominance': 'Do
 STATISTICS = ['mean', 'std', 'median', 'max']
 VAD_COLUMNS = [f'vad_{dimension}_{statistic}' for dimension in DIMENSIONS for statistic in STATISTICS]
 MODEL_COLORS = {'Qwen Standard': '#3978B8', 'Qwen Obliterated': '#D66545'}
+MODEL_MARKERS = {'Qwen Standard': 'o', 'Qwen Obliterated': 's'}
 SOURCE_STYLES = {'REAL': {'level': 1.0, 'hatch': ''}, 'AI': {'level': 0.58, 'hatch': '//'}}
 
 def model_name(value):
@@ -167,6 +171,121 @@ def build_difference_summary(profession_source):
     save_csv(result, 'rq4_difference_summary.csv')
     return result
 
+def build_profession_contrasts(profession_source):
+    """Calcola AI-REAL a livello di professione per prompt e dimensione."""
+    rows = []
+    for dimension in DIMENSIONS:
+        column = f'vad_{dimension}_mean'
+        wide = profession_source.pivot_table(
+            index=['model_label', 'profession', 'prompt_condition'],
+            columns='image_source',
+            values=column
+        ).reset_index()
+        if 'AI' not in wide.columns or 'REAL' not in wide.columns:
+            raise ValueError('Impossibile calcolare AI-REAL: manca una provenienza.')
+        wide['difference'] = wide['AI'] - wide['REAL']
+        wide['dimension'] = dimension
+        rows.append(wide[['model_label', 'profession', 'prompt_condition', 'dimension', 'difference']])
+    result = pd.concat(rows, ignore_index=True)
+    save_csv(result, 'rq4_profession_contrasts.csv')
+    return result
+
+
+def bootstrap_difference_summary(profession_contrasts):
+    """Bootstrap percentile 95% con ricampionamento delle professioni."""
+    rng = np.random.default_rng(BOOTSTRAP_SEED)
+    rows = []
+    for (model, condition, dimension), group in profession_contrasts.groupby(
+        ['model_label', 'prompt_condition', 'dimension'], observed=True
+    ):
+        values = group['difference'].to_numpy(dtype=float)
+        boot = np.empty(BOOTSTRAP_RESAMPLES, dtype=float)
+        for i in range(BOOTSTRAP_RESAMPLES):
+            boot[i] = rng.choice(values, size=len(values), replace=True).mean()
+        low, high = np.percentile(boot, [2.5, 97.5])
+        rows.append({
+            'model_label': model,
+            'prompt_condition': condition,
+            'dimension': dimension,
+            'mean_difference': float(values.mean()),
+            'ci_low': float(low),
+            'ci_high': float(high),
+            'n_professions': int(len(values)),
+            'ci_excludes_zero': bool(low > 0 or high < 0),
+        })
+    result = pd.DataFrame(rows)
+    save_csv(result, 'rq4_source_bootstrap_summary.csv')
+    return result
+
+
+def plot_forest(summary):
+    """Forest plot finale usato nella tesi."""
+    models = ['Qwen Standard', 'Qwen Obliterated']
+    labels = [(dimension, condition) for dimension in DIMENSIONS for condition in PROMPT_ORDER]
+    y = np.arange(len(labels))[::-1]
+    offsets = {'Qwen Standard': 0.12, 'Qwen Obliterated': -0.12}
+    fig, ax = plt.subplots(figsize=(11.0, 7.5))
+
+    for model in models:
+        means, lower_err, upper_err = [], [], []
+        for dimension, condition in labels:
+            row = summary[
+                (summary['model_label'] == model) &
+                (summary['dimension'] == dimension) &
+                (summary['prompt_condition'] == condition)
+            ]
+            if len(row) != 1:
+                raise ValueError(f'Dato non univoco: {model}, {dimension}, {condition}')
+            mean = float(row.iloc[0]['mean_difference'])
+            low = float(row.iloc[0]['ci_low'])
+            high = float(row.iloc[0]['ci_high'])
+            means.append(mean)
+            lower_err.append(mean - low)
+            upper_err.append(high - mean)
+
+        ax.errorbar(
+            means,
+            y + offsets[model],
+            xerr=[lower_err, upper_err],
+            fmt=MODEL_MARKERS[model],
+            color=MODEL_COLORS[model],
+            ecolor=MODEL_COLORS[model],
+            capsize=2.8,
+            markersize=6.5,
+            linewidth=1.4,
+            label=model,
+        )
+
+    ax.axvline(0, color='#555555', linewidth=1.0)
+    ax.set_yticks(y)
+    ax.set_yticklabels(
+        [f'{DIMENSION_LABELS[d]}   {PROMPT_LABELS[c]}' for d, c in labels],
+        fontsize=9.8,
+    )
+    ax.set_xlabel('Differenza AI-REAL (IC 95% bootstrap sulle professioni)', fontsize=11)
+    ax.xaxis.set_major_formatter(
+        FuncFormatter(lambda value, _: f'{value:.2f}'.replace('.', ','))
+    )
+    ax.set_title(
+        'Differenze AI-REAL nei punteggi NRC-VAD (NO_SYS)',
+        fontsize=16,
+        fontweight='bold',
+        pad=12,
+    )
+    ax.grid(axis='x', color='#D8D8D8', linewidth=0.7, alpha=0.55)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.legend(
+        loc='lower center',
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=2,
+        frameon=False,
+        fontsize=10,
+    )
+    fig.subplots_adjust(left=0.31, right=0.98, top=0.9, bottom=0.18)
+    return save_figure(fig, 'rq4_source_forest_plot')
+
+
 def plot_absolute_values(summary):
     plot_df = summary[summary['statistic'] == 'mean'].copy()
     models = ['Qwen Standard', 'Qwen Obliterated']
@@ -266,10 +385,10 @@ def main():
     for model in ['Qwen Standard', 'Qwen Obliterated']:
         print(f'  - {model}: {int(counts.get(model, 0))}')
     profession_source = build_profession_source_values(image_level, eligible)
-    absolute_summary = build_absolute_summary(profession_source)
-    difference_summary = build_difference_summary(profession_source)
+    profession_contrasts = build_profession_contrasts(profession_source)
+    difference_summary = bootstrap_difference_summary(profession_contrasts)
     table_path = write_difference_table(difference_summary)
-    figure_png, figure_pdf = plot_absolute_values(absolute_summary)
+    figure_png, figure_pdf = plot_forest(difference_summary)
     print_difference_preview(difference_summary)
     print()
     print('Output finali:')

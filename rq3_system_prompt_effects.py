@@ -253,7 +253,7 @@ def write_prompt_abbreviations():
     path = OUTPUT_DIR / 'rq3_prompt_abbreviations_table.tex'
     lines = ['\\begin{table}[H]', '\\centering', '\\small', '\\begin{tabular}{lll}', '\\hline', '\\textbf{Sigla} & \\textbf{Prompt} & \\textbf{Orientamento} \\\\', '\\hline']
     for system_id in SYSTEM_PROMPTS:
-        tex_system_id = system_id.replace('_', '\\_')
+        tex_system_id = system_id.replace('_', chr(92) + '_')
         lines.append(
             f"{SHORT_LABELS[system_id]} & \\texttt{{{tex_system_id}}} & "
             f"{PROMPT_ORIENTATIONS[system_id]} \\\\"

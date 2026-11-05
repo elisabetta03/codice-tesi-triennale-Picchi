@@ -9,3 +9,5 @@ output_qwen*/
 output_Qwen*/
 image_annotations.csv
 *.zip
+analysis_outputs/
+validation_output/

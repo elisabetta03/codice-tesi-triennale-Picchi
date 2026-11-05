@@ -14,6 +14,7 @@ import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
@@ -205,7 +206,7 @@ def bootstrap_summary(profession_level, filename):
     return summary
 
 
-def heatmap(summary, stem, title, colorbar_label):
+def heatmap(summary, stem, title, colorbar_label, colorbar_digits):
     rows = SYSTEM_PROMPTS
     nrows = len(rows)
     fig, axes = plt.subplots(1, 2, figsize=(12.2, 7.0), sharey=True)
@@ -241,6 +242,7 @@ def heatmap(summary, stem, title, colorbar_label):
     fig.suptitle(title, fontsize=17, fontweight='bold', y=0.99)
     cbar = fig.colorbar(image, ax=axes, fraction=0.025, pad=0.025)
     cbar.set_label(colorbar_label, fontsize=11, rotation=270, labelpad=17)
+    cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f'{value:.{colorbar_digits}f}'.replace('.', ',')))
     cbar.ax.tick_params(labelsize=9)
     fig.text(0.02, 0.025, 'In grassetto: IC 95% bootstrap che non include lo zero.', fontsize=10)
     fig.subplots_adjust(left=0.17, right=0.88, top=0.88, bottom=0.08, wspace=0.02)
@@ -285,8 +287,8 @@ def main():
     write_prompt_abbreviations()
     write_summary_table(overall, 'rq3_overall_table.tex', 'Variazioni medie rispetto a NO\\_SYS, calcolate entro professione e mediate assegnando lo stesso peso a ciascuna professione.', 'tab:rq3-overall')
     write_summary_table(demographic, 'rq3_demographic_table.tex', 'Differenze medie tra gruppi demografici nell’effetto dei system prompt rispetto a NO\\_SYS.', 'tab:rq3-demographic')
-    heatmap(overall, 'rq3_system_effect_heatmap', 'Effetto dei system prompt rispetto a NO_SYS', 'Variazione rispetto a NO_SYS')
-    heatmap(demographic, 'rq3_demographic_effect_heatmap', "Differenze demografiche nell'effetto dei system prompt", 'Contrasto M-F / W-NW')
+    heatmap(overall, 'rq3_system_effect_heatmap', 'Effetto dei system prompt rispetto a NO_SYS', 'Variazione rispetto a NO_SYS', 2)
+    heatmap(demographic, 'rq3_demographic_effect_heatmap', "Differenze demografiche nell'effetto dei system prompt", 'Contrasto M-F / W-NW', 4)
     print(f'\nOutput: {OUTPUT_DIR}')
 
 

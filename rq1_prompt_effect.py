@@ -8,6 +8,7 @@ plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
 from matplotlib.patches import Patch
 from matplotlib.colors import to_rgb
+from matplotlib.ticker import FuncFormatter
 PROJECT_DIR = Path(__file__).resolve().parent
 INPUT_FILE = PROJECT_DIR / 'merged_outputs' / 'merged_long_qwen_obliterated.csv'
 OUTPUT_DIR = PROJECT_DIR / 'analysis_outputs' / 'rq1'
@@ -333,6 +334,7 @@ def plot_grouped_vad_statistics(plot_summary):
         ax.set_title(DIMENSION_LABELS[dimension], fontsize=14, fontweight='bold', pad=8)
         ax.set_ylim(0, 1.05)
         ax.set_yticks(np.arange(0, 1.01, 0.2))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f'{value:.1f}'.replace('.', ',')))
         ax.grid(axis='y', color='#D8D8D8', linewidth=0.7, alpha=0.55, zorder=0)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)

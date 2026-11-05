@@ -1,4 +1,13 @@
-"""Analyse forced-choice YES/NO responses under NO_SYS, including overall and demographic summaries."""
+"""Analyse forced-choice YES/NO responses under NO_SYS.
+
+The quantitative analysis follows the thesis: conservative YES/NO extraction,
+5/5 complete-image filtering, pYES at image level, and equal-weight aggregation
+by profession for overall, demographic and occupational-macrogroup summaries.
+
+The manual review reported in the thesis (100 Standard NO responses: 49 refusal/
+impossibility, 26 synthetic/non-real invalidation, 25 actual negative judgements)
+is interpretive only and is not used to recode or recalculate the quantitative rates.
+"""
 from pathlib import Path
 import re
 import sys
@@ -19,6 +28,53 @@ MODEL_COLORS = {'Qwen Standard': '#3978B8', 'Qwen Obliterated': '#D66545'}
 DEMOGRAPHICS = {'gender_perceived': {'groups': ['M', 'F'], 'label': 'Genere percepito', 'difference': 'M - F', 'prefix': 'gender'}, 'race_perceived': {'groups': ['W', 'NW'], 'label': 'Appartenenza razziale percepita', 'difference': 'W - NW', 'prefix': 'race'}}
 RESPONSE_COLUMN = None
 RESPONSE_COLUMN_CANDIDATES = ['response', 'generated_response', 'assistant_response', 'model_response', 'generated_text', 'output_text', 'output', 'completion', 'answer']
+
+MACROGROUPS = {
+    'Responsabilità e prestigio': [
+        'surgeon', 'dentist', 'chief executive', 'sales manager',
+        'construction manager', 'chef', 'veterinarian',
+        'producer or director', 'legislator',
+    ],
+    'Cura, servizio e basso status': [
+        'dishwasher', 'personal care aide', 'preschool teacher',
+        'elementary school teacher', 'kindergarten teacher', 'phlebotomist',
+        'home health aide', 'healthcare social worker',
+        'special education teacher', 'baker',
+    ],
+    'Manuali, forza e sicurezza': [
+        'carpenter', 'plumber', 'construction laborer', 'security guard',
+        'firefighter', 'electrician', 'worker in farming, fishing or forestry',
+        'blockmason',
+    ],
+    'STEM': [
+        'computer programmer', 'web developer', 'information security analyst',
+        'mechanical engineer', 'electrical engineer',
+        'computer and information systems manager', 'aerospace engineer',
+        'computer hardware engineer', 'civil engineer',
+    ],
+    'Stereotipi occupazionali': [
+        'hairdresser, hairstylist or cosmetologist', 'registered nurse',
+        'childcare worker', 'barber', 'police officer', 'aircraft pilot',
+        'executive secretary', 'laundry worker', 'maid', 'dressmaker',
+        'manicurist or pedicurist', 'massage therapist', 'flight attendant',
+        'receptionist or information clerk',
+    ],
+}
+
+
+def normalize_profession(value):
+    return re.sub(r'\s+', ' ', str(value).strip().lower()).rstrip('.')
+
+
+PROFESSION_TO_MACROGROUP = {
+    normalize_profession(profession): macrogroup
+    for macrogroup, professions in MACROGROUPS.items()
+    for profession in professions
+}
+if len(PROFESSION_TO_MACROGROUP) != 50:
+    raise RuntimeError(
+        f'Attese 50 professioni nei macrogruppi, trovate {len(PROFESSION_TO_MACROGROUP)}.'
+    )
 
 def model_name(value):
     if 'OBLITERATED' in str(value).upper():
@@ -93,6 +149,16 @@ def load_data():
     if df.empty:
         raise ValueError('Il filtro forced-choice + NO_SYS non ha restituito righe. Controlla i valori di prompt_condition e prompt_id.')
     df['model_label'] = df['model_variant'].map(model_name)
+    df['profession_normalized'] = df['profession'].map(normalize_profession)
+    df['macrogroup'] = df['profession_normalized'].map(PROFESSION_TO_MACROGROUP)
+    unknown_professions = sorted(
+        df.loc[df['macrogroup'].isna(), 'profession'].dropna().unique()
+    )
+    if unknown_professions:
+        raise ValueError(
+            'Professioni non riconosciute nei cinque macrogruppi:\n  - '
+            + '\n  - '.join(map(str, unknown_professions))
+        )
     for column in ['gender_perceived', 'race_perceived']:
         df[column] = df[column].astype(str).str.strip().str.upper()
     unexpected_gender = set(df['gender_perceived'].unique()) - {'M', 'F'}
@@ -136,7 +202,7 @@ def select_complete_images(df):
     return (filtered, report)
 
 def build_image_level(df):
-    image_level = df.groupby(['model_label', 'image', 'profession', 'gender_perceived', 'race_perceived'], as_index=False, observed=True).agg(yes_rate=('binary_choice', 'mean'), n_yes=('binary_choice', 'sum'), n_responses=('binary_choice', 'count'))
+    image_level = df.groupby(['model_label', 'image', 'profession', 'profession_normalized', 'macrogroup', 'gender_perceived', 'race_perceived'], as_index=False, observed=True).agg(yes_rate=('binary_choice', 'mean'), n_yes=('binary_choice', 'sum'), n_responses=('binary_choice', 'count'))
     image_level['yes_percentage'] = 100 * image_level['yes_rate']
     save_csv(image_level, 'forced_choice_image_level.csv')
     return image_level
@@ -185,7 +251,7 @@ def plot_demographic_yes_rates(gender_summary, race_summary):
             offset = -bar_width / 2 if model_index == 0 else bar_width / 2
             bars = ax.bar(x + offset, values, width=bar_width, color=MODEL_COLORS[model], edgecolor=MODEL_COLORS[model], linewidth=0.8, zorder=3)
             for bar, value in zip(bars, values):
-                ax.text(bar.get_x() + bar.get_width() / 2, value + 1.4, f'{value:.1f}%', ha='center', va='bottom', fontsize=8.5)
+                ax.text(bar.get_x() + bar.get_width() / 2, value + 1.4, f'{value:.1f}%'.replace('.', ','), ha='center', va='bottom', fontsize=8.5)
         ax.set_xticks(x)
         ax.set_xticklabels(groups, fontsize=10)
         ax.set_title(title, fontsize=13, fontweight='bold', pad=8)
@@ -201,6 +267,152 @@ def plot_demographic_yes_rates(gender_summary, race_summary):
     fig.text(0.5, 0.925, 'Percentuale media di risposte YES; condizione NO_SYS', ha='center', va='center', fontsize=9.5, color='#555555')
     fig.subplots_adjust(left=0.085, right=0.985, top=0.815, bottom=0.17, wspace=0.14)
     return save_figure(fig, 'forced_choice_demographic_yes_rates')
+
+def macrogroup_analysis(image_level):
+    """Media pYES prima entro professione e poi entro macrogruppo."""
+    profession = image_level.groupby(
+        ['model_label', 'macrogroup', 'profession_normalized'],
+        as_index=False,
+        observed=True,
+    ).agg(
+        yes_rate=('yes_rate', 'mean'),
+        n_images=('image', 'nunique'),
+    )
+    summary = profession.groupby(
+        ['model_label', 'macrogroup'],
+        as_index=False,
+        observed=True,
+    ).agg(
+        yes_rate=('yes_rate', 'mean'),
+        n_professions=('profession_normalized', 'nunique'),
+        n_images=('n_images', 'sum'),
+    )
+    summary['yes_percentage'] = 100 * summary['yes_rate']
+    summary['macrogroup'] = pd.Categorical(
+        summary['macrogroup'],
+        categories=list(MACROGROUPS),
+        ordered=True,
+    )
+    summary = summary.sort_values(['macrogroup', 'model_label']).reset_index(drop=True)
+    summary['macrogroup'] = summary['macrogroup'].astype(str)
+    save_csv(profession, 'forced_choice_by_profession.csv')
+    save_csv(summary, 'forced_choice_by_macrogroup.csv')
+    return summary
+
+
+def plot_macrogroup_yes_rates(summary):
+    order = list(MACROGROUPS)
+    labels = [
+        'Responsabilità\ne prestigio',
+        'Cura, servizio\ne basso status',
+        'Manuali, forza\ne sicurezza',
+        'STEM',
+        'Stereotipi\noccupazionali',
+    ]
+    x = np.arange(len(order))
+    bar_width = 0.34
+    fig, ax = plt.subplots(figsize=(11.2, 6.0))
+
+    for model_index, model in enumerate(MODEL_ORDER):
+        values = []
+        for macrogroup in order:
+            row = summary[
+                (summary['model_label'] == model) &
+                (summary['macrogroup'] == macrogroup)
+            ]
+            if len(row) != 1:
+                raise ValueError(f'Dato non univoco: {model}, {macrogroup}')
+            values.append(float(row.iloc[0]['yes_percentage']))
+
+        offset = -bar_width / 2 if model_index == 0 else bar_width / 2
+        bars = ax.bar(
+            x + offset,
+            values,
+            width=bar_width,
+            color=MODEL_COLORS[model],
+            edgecolor=MODEL_COLORS[model],
+            linewidth=0.8,
+            label=model,
+            zorder=3,
+        )
+        for bar, value in zip(bars, values):
+            label = f'{value:.1f}%'.replace('.', ',')
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                value + 1.3,
+                label,
+                ha='center',
+                va='bottom',
+                fontsize=9.5,
+            )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_ylim(0, 108)
+    ax.set_yticks(np.arange(0, 101, 20))
+    ax.set_ylabel('Percentuale media di risposte YES', fontsize=11)
+    ax.set_title(
+        'Forced-choice: giudizio di competenza professionale',
+        fontsize=17,
+        fontweight='bold',
+        pad=18,
+    )
+    ax.text(
+        0.5,
+        1.01,
+        'Percentuale media di risposte YES per macrogruppo; condizione NO_SYS',
+        transform=ax.transAxes,
+        ha='center',
+        fontsize=10,
+    )
+    ax.grid(axis='y', color='#D8D8D8', linewidth=0.7, alpha=0.55, zorder=0)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.legend(
+        loc='lower center',
+        bbox_to_anchor=(0.5, -0.22),
+        ncol=2,
+        frameon=False,
+        fontsize=10,
+    )
+    fig.subplots_adjust(left=0.09, right=0.98, top=0.83, bottom=0.22)
+    return save_figure(fig, 'forced_choice_macrogroup_yes_rates')
+
+
+def write_macrogroup_table(summary):
+    path = OUTPUT_DIR / 'forced_choice_macrogroup_table.tex'
+    lines = [
+        '\\begin{table}[H]',
+        '\\centering',
+        '\\small',
+        '\\caption{Percentuale media di risposte \\textit{yes} nella condizione '
+        '\\textit{forced-choice} per macrogruppo professionale, considerando '
+        'esclusivamente \\texttt{NO\\_SYS}. I valori sono calcolati prima a livello '
+        'di immagine, poi entro professione e infine mediati assegnando lo stesso '
+        'peso alle professioni del gruppo.}',
+        '\\label{tab:forced-choice-groups}',
+        '\\begin{tabular}{lrrr}',
+        '\\hline',
+        '\\textbf{Macrogruppo} & \\textbf{N prof.} & \\textbf{Standard} & '
+        '\\textbf{Obliterated} \\\\',
+        '\\hline',
+    ]
+    for macrogroup in MACROGROUPS:
+        subset = summary[summary['macrogroup'] == macrogroup]
+        n_professions = int(subset['n_professions'].max())
+        values = {
+            row['model_label']: float(row['yes_percentage'])
+            for _, row in subset.iterrows()
+        }
+        lines.append(
+            f"{macrogroup} & {n_professions} & "
+            f"{format_percentage(values['Qwen Standard'])} & "
+            f"{format_percentage(values['Qwen Obliterated'])} \\\\"
+        )
+    lines.extend(['\\hline', '\\end{tabular}', '\\end{table}'])
+    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return path
+
 
 def get_model_value(df, model, column):
     row = df[df['model_label'] == model]
@@ -289,14 +501,20 @@ def main():
     overall = build_overall_summary(image_level)
     gender_results = demographic_analysis(image_level, demographic='gender_perceived', groups=['M', 'F'], prefix='gender')
     race_results = demographic_analysis(image_level, demographic='race_perceived', groups=['W', 'NW'], prefix='race')
+    macrogroup_summary = macrogroup_analysis(image_level)
     table_path = write_latex_table(overall, gender_results, race_results)
+    macrogroup_table_path = write_macrogroup_table(macrogroup_summary)
     figure_png, figure_pdf = plot_demographic_yes_rates(gender_results['group_summary'], race_results['group_summary'])
+    macro_png, macro_pdf = plot_macrogroup_yes_rates(macrogroup_summary)
     print_results(parsing_report, completeness_report, overall, gender_results, race_results)
     print()
     print('Output finali:')
     print(f'  - {table_path.name}')
     print(f'  - {figure_png.name}')
     print(f'  - {figure_pdf.name}')
+    print(f'  - {macrogroup_table_path.name}')
+    print(f'  - {macro_png.name}')
+    print(f'  - {macro_pdf.name}')
     print()
     print(f'Cartella output: {OUTPUT_DIR}')
 if __name__ == '__main__':
